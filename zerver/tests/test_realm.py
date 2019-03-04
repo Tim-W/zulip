@@ -414,14 +414,14 @@ class RealmTest(ZulipTestCase):
 
         req = {"video_chat_provider": ujson.dumps("Zoom")}
         result = self.client_patch('/json/realm', req)
-        self.assert_json_error(result, "Invalid user ID: user ID cannot be empty")
+        self.assert_json_error(result, "User ID cannot be empty")
 
         req = {
             "video_chat_provider": ujson.dumps("Zoom"),
             "zoom_user_id": ujson.dumps("example@example.com")
         }
         result = self.client_patch('/json/realm', req)
-        self.assert_json_error(result, "Invalid API key: API key cannot be empty")
+        self.assert_json_error(result, "API key cannot be empty")
 
         req = {
             "video_chat_provider": ujson.dumps("Zoom"),
@@ -429,7 +429,7 @@ class RealmTest(ZulipTestCase):
             "zoom_api_key": ujson.dumps("abc")
         }
         result = self.client_patch('/json/realm', req)
-        self.assert_json_error(result, "Invalid API secret: API secret cannot be empty")
+        self.assert_json_error(result, "API secret cannot be empty")
 
         with mock.patch("zerver.views.realm.request_zoom_video_call_url", return_value=None):
             req = {
@@ -441,7 +441,8 @@ class RealmTest(ZulipTestCase):
             result = self.client_patch('/json/realm', req)
             self.assert_json_error(result, "Invalid credentials for the Zoom API.")
 
-        with mock.patch("zerver.views.realm.request_zoom_video_call_url", return_value={'join_url': 'example.com'}):
+        with mock.patch("zerver.views.realm.request_zoom_video_call_url",
+                        return_value={'join_url': 'example.com'}) as mock_validation:
             req = {
                 "video_chat_provider": ujson.dumps("Zoom"),
                 "zoom_user_id": ujson.dumps("example@example.com"),
@@ -450,6 +451,31 @@ class RealmTest(ZulipTestCase):
             }
             result = self.client_patch('/json/realm', req)
             self.assert_json_success(result)
+            mock_validation.assert_called_once()
+
+        with mock.patch("zerver.views.realm.request_zoom_video_call_url",
+                        return_value={'join_url': 'example.com'}) as mock_validation:
+            req = {
+                "video_chat_provider": ujson.dumps("Zoom"),
+                "zoom_user_id": ujson.dumps("example@example.com"),
+                "zoom_api_key": ujson.dumps("abc"),
+                "zoom_api_secret": ujson.dumps("abc"),
+            }
+            result = self.client_patch('/json/realm', req)
+            self.assert_json_success(result)
+            mock_validation.assert_not_called()
+
+        with mock.patch("zerver.views.realm.request_zoom_video_call_url",
+                        return_value={'join_url': 'example.com'}) as mock_validation:
+            req = {
+                "video_chat_provider": ujson.dumps("Zoom"),
+                "zoom_user_id": ujson.dumps("example@example.com"),
+                "zoom_api_key": ujson.dumps("abc"),
+                "zoom_api_secret": ujson.dumps(""),
+            }
+            result = self.client_patch('/json/realm', req)
+            self.assert_json_success(result)
+            mock_validation.assert_not_called()
 
     def test_initial_plan_type(self) -> None:
         with self.settings(BILLING_ENABLED=True):

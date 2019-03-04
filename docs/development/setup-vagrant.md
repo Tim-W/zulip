@@ -66,7 +66,7 @@ Follow our [Git Guide][set-up-git] in order to install Git, set up a
 GitHub account, create an SSH key to access code on GitHub
 efficiently, etc.  Be sure to create an ssh key and add it to your
 GitHub account using
-[these instructions](https://help.github.com/articles/generating-an-ssh-key/).
+[these instructions](https://help.github.com/en/articles/generating-an-ssh-key).
 
 ### Step 1: Install Prerequisites
 
@@ -278,11 +278,12 @@ Now you are ready for [Step 2: Get Zulip Code.](#step-2-get-zulip-code)
 2. Open Terminal (macOS/Ubuntu) or Git BASH (Windows; must
    **run as an Administrator**).
 3. In Terminal/Git BASH,
-   [clone your fork of the Zulip repository](../git/cloning.html#step-1b-clone-to-your-machine)
-   and [connect the Zulip upstream repository](../git/cloning.html#step-1c-connect-your-fork-to-zulip-upstream):
+   [clone your fork of the Zulip repository](../git/cloning.html#step-1b-clone-to-your-machine) and
+   [connect the Zulip upstream repository](../git/cloning.html#step-1c-connect-your-fork-to-zulip-upstream):
 
 ```
 git clone --config pull.rebase git@github.com:YOURUSERNAME/zulip.git
+cd zulip
 git remote add -f upstream https://github.com/zulip/zulip.git
 ```
 
@@ -765,6 +766,19 @@ vboxmanage setextradata YOURVMNAME VBoxInternal2/SharedFoldersEnableSymlinksCrea
 ```
 
 The virtual machine needs to be shut down when you run this command.
+
+#### Hyper-V error messages
+
+If you get an error message on Windows about lack of Windows Home
+support for Hyper-V when running `vagrant up`, the problem is that
+Windows is incorrectly attempting to use Hyper-V rather than
+Virtualbox as the virtualization provider.  You can fix this by
+explicitly passing the virtualbox provider to `vagrant up`:
+
+```
+christie@win10 ~/zulip
+$ vagrant up --provide=virtualbox
+```
 
 #### Connection timeout on `vagrant up`
 

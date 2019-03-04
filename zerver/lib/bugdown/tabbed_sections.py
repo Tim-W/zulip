@@ -51,6 +51,15 @@ TAB_DISPLAY_NAMES = {
     'cloud': 'HipChat Cloud',
     'server': 'HipChat Server or Data Center',
     'stride': 'Stride',
+
+    'send-email-invitations': 'Send email invitations',
+    'share-an-invite-link': 'Share an invite link',
+    'allow-anyone-to-join': 'Allow anyone to join',
+    'restrict-by-email-domain': 'Restrict by email domain',
+
+    'google-hangouts': 'Google Hangouts',
+    'zoom': 'Zoom (experimental)',
+    'jitsi-on-premise': 'Jitsi on-premise',
 }
 
 class TabbedSectionsGenerator(Extension):

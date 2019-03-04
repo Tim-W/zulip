@@ -56,7 +56,7 @@ django-sendfile==0.3.11
 django-statsd-mozilla==0.4.0
 django-two-factor-auth==1.8.0
 django-webpack-loader==0.6.0
-django==1.11.18
+django==1.11.20
 docker-pycreds==0.4.0     # via docker
 docker==3.7.0             # via moto
 docopt==0.6.2
@@ -90,6 +90,7 @@ jinja2==2.10
 jmespath==0.9.3           # via boto3, botocore
 jsondiff==1.1.1           # via moto
 jsonpickle==1.1           # via aws-xray-sdk, python-digitalocean
+line_profiler==2.1.2
 lxml==4.3.0
 markdown-include==0.5.1
 markdown==3.0.1
@@ -118,6 +119,7 @@ prompt-toolkit==1.0.15    # via ipython
 psycopg2==2.7.7
 ptyprocess==0.6.0         # via pexpect
 py3dns==3.2.0
+pyahocorasick==1.4.0
 pyaml==18.11.0            # via moto
 pyasn1-modules==0.2.4
 pyasn1==0.4.5

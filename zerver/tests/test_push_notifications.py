@@ -15,6 +15,7 @@ import uuid
 from django.test import override_settings
 from django.conf import settings
 from django.http import HttpResponse
+from django.db.models import F
 from django.utils.crypto import get_random_string
 from django.utils.timezone import utc as timezone_utc
 
@@ -34,7 +35,7 @@ from zerver.models import (
     Stream,
     Subscription,
 )
-from zerver.lib.actions import do_delete_messages
+from zerver.lib.actions import do_delete_messages, do_mark_stream_messages_as_read
 from zerver.lib.soft_deactivation import do_soft_deactivate_users
 from zerver.lib.push_notifications import (
     absolute_avatar_url,
@@ -42,9 +43,9 @@ from zerver.lib.push_notifications import (
     datetime_to_timestamp,
     DeviceToken,
     get_apns_client,
-    get_apns_payload,
     get_display_recipient,
-    get_gcm_payload,
+    get_message_payload_apns,
+    get_message_payload_gcm,
     get_mobile_push_content,
     handle_push_notification,
     handle_remove_push_notification,
@@ -660,17 +661,17 @@ class HandlePushNotificationTest(PushNotificationTest):
             'trigger': 'private_message',
         }
         with self.settings(PUSH_NOTIFICATION_BOUNCER_URL=True), \
-                mock.patch('zerver.lib.push_notifications.get_apns_payload',
+                mock.patch('zerver.lib.push_notifications.get_message_payload_apns',
                            return_value={'apns': True}), \
-                mock.patch('zerver.lib.push_notifications.get_gcm_payload',
-                           return_value={'gcm': True}), \
+                mock.patch('zerver.lib.push_notifications.get_message_payload_gcm',
+                           return_value=({'gcm': True}, {})), \
                 mock.patch('zerver.lib.push_notifications'
                            '.send_notifications_to_bouncer') as mock_send:
             handle_push_notification(user_profile.id, missed_message)
             mock_send.assert_called_with(user_profile.id,
                                          {'apns': True},
                                          {'gcm': True},
-                                         {'priority': 'high'},
+                                         {},
                                          )
 
     def test_non_bouncer_push(self) -> None:
@@ -694,10 +695,10 @@ class HandlePushNotificationTest(PushNotificationTest):
             'message_id': message.id,
             'trigger': 'private_message',
         }
-        with mock.patch('zerver.lib.push_notifications.get_apns_payload',
+        with mock.patch('zerver.lib.push_notifications.get_message_payload_apns',
                         return_value={'apns': True}), \
-                mock.patch('zerver.lib.push_notifications.get_gcm_payload',
-                           return_value={'gcm': True}), \
+                mock.patch('zerver.lib.push_notifications.get_message_payload_gcm',
+                           return_value=({'gcm': True}, {})), \
                 mock.patch('zerver.lib.push_notifications'
                            '.send_apple_push_notification') as mock_send_apple, \
                 mock.patch('zerver.lib.push_notifications'
@@ -708,7 +709,7 @@ class HandlePushNotificationTest(PushNotificationTest):
             mock_send_apple.assert_called_with(self.user_profile.id,
                                                apple_devices,
                                                {'apns': True})
-            mock_send_android.assert_called_with(android_devices, {'gcm': True}, {'priority': 'high'})
+            mock_send_android.assert_called_with(android_devices, {'gcm': True}, {})
             mock_push_notifications.assert_called_once()
 
     def test_send_remove_notifications_to_bouncer(self) -> None:
@@ -723,14 +724,19 @@ class HandlePushNotificationTest(PushNotificationTest):
         with self.settings(PUSH_NOTIFICATION_BOUNCER_URL=True), \
                 mock.patch('zerver.lib.push_notifications'
                            '.send_notifications_to_bouncer') as mock_send_android, \
-                mock.patch('zerver.lib.push_notifications.get_common_payload',
+                mock.patch('zerver.lib.push_notifications.get_base_payload',
                            return_value={'gcm': True}):
-            handle_remove_push_notification(user_profile.id, message.id)
-            mock_send_android.assert_called_with(user_profile.id, {},
-                                                 {'gcm': True,
-                                                  'event': 'remove',
-                                                  'zulip_message_id': message.id},
-                                                 {'priority': 'normal'})
+            handle_remove_push_notification(user_profile.id, [message.id])
+            mock_send_android.assert_called_with(
+                user_profile.id,
+                {},
+                {
+                    'gcm': True,
+                    'event': 'remove',
+                    'zulip_message_ids': str(message.id),
+                    'zulip_message_id': message.id,
+                },
+                {'priority': 'normal'})
             user_message = UserMessage.objects.get(user_profile=self.user_profile,
                                                    message=message)
             self.assertEqual(user_message.flags.active_mobile_push_notification, False)
@@ -751,14 +757,18 @@ class HandlePushNotificationTest(PushNotificationTest):
 
         with mock.patch('zerver.lib.push_notifications'
                         '.send_android_push_notification') as mock_send_android, \
-                mock.patch('zerver.lib.push_notifications.get_common_payload',
+                mock.patch('zerver.lib.push_notifications.get_base_payload',
                            return_value={'gcm': True}):
-            handle_remove_push_notification(self.user_profile.id, message.id)
-            mock_send_android.assert_called_with(android_devices,
-                                                 {'gcm': True,
-                                                  'event': 'remove',
-                                                  'zulip_message_id': message.id},
-                                                 {'priority': 'normal'})
+            handle_remove_push_notification(self.user_profile.id, [message.id])
+            mock_send_android.assert_called_with(
+                android_devices,
+                {
+                    'gcm': True,
+                    'event': 'remove',
+                    'zulip_message_ids': str(message.id),
+                    'zulip_message_id': message.id,
+                },
+                {'priority': 'normal'})
             user_message = UserMessage.objects.get(user_profile=self.user_profile,
                                                    message=message)
             self.assertEqual(user_message.flags.active_mobile_push_notification, False)
@@ -802,10 +812,10 @@ class HandlePushNotificationTest(PushNotificationTest):
             PushDeviceToken.objects.filter(user=self.user_profile,
                                            kind=PushDeviceToken.APNS))
 
-        with mock.patch('zerver.lib.push_notifications.get_apns_payload',
+        with mock.patch('zerver.lib.push_notifications.get_message_payload_apns',
                         return_value={'apns': True}), \
-                mock.patch('zerver.lib.push_notifications.get_gcm_payload',
-                           return_value={'gcm': True}), \
+                mock.patch('zerver.lib.push_notifications.get_message_payload_gcm',
+                           return_value=({'gcm': True}, {})), \
                 mock.patch('zerver.lib.push_notifications'
                            '.send_apple_push_notification') as mock_send_apple, \
                 mock.patch('zerver.lib.push_notifications'
@@ -817,7 +827,7 @@ class HandlePushNotificationTest(PushNotificationTest):
             mock_send_apple.assert_called_with(self.user_profile.id,
                                                apple_devices,
                                                {'apns': True})
-            mock_send_android.assert_called_with(android_devices, {'gcm': True}, {'priority': 'high'})
+            mock_send_android.assert_called_with(android_devices, {'gcm': True}, {})
             mock_push_notifications.assert_called_once()
 
 class TestAPNs(PushNotificationTest):
@@ -942,7 +952,7 @@ class TestAPNs(PushNotificationTest):
             payload)
 
 class TestGetAPNsPayload(PushNotificationTest):
-    def test_get_apns_payload_personal_message(self) -> None:
+    def test_get_message_payload_apns_personal_message(self) -> None:
         user_profile = self.example_user("othello")
         message_id = self.send_personal_message(
             self.example_email('hamlet'),
@@ -951,7 +961,7 @@ class TestGetAPNsPayload(PushNotificationTest):
         )
         message = Message.objects.get(id=message_id)
         message.trigger = 'private_message'
-        payload = get_apns_payload(user_profile, message)
+        payload = get_message_payload_apns(user_profile, message)
         expected = {
             'alert': {
                 'title': 'King Hamlet',
@@ -975,14 +985,14 @@ class TestGetAPNsPayload(PushNotificationTest):
         self.assertDictEqual(payload, expected)
 
     @mock.patch('zerver.lib.push_notifications.push_notifications_enabled', return_value = True)
-    def test_get_apns_payload_huddle_message(self, mock_push_notifications: mock.MagicMock) -> None:
+    def test_get_message_payload_apns_huddle_message(self, mock_push_notifications: mock.MagicMock) -> None:
         user_profile = self.example_user("othello")
         message_id = self.send_huddle_message(
             self.sender.email,
             [self.example_email('othello'), self.example_email('cordelia')])
         message = Message.objects.get(id=message_id)
         message.trigger = 'private_message'
-        payload = get_apns_payload(user_profile, message)
+        payload = get_message_payload_apns(user_profile, message)
         expected = {
             'alert': {
                 'title': 'Cordelia Lear, King Hamlet, Othello, the Moor of Venice',
@@ -1010,14 +1020,14 @@ class TestGetAPNsPayload(PushNotificationTest):
         self.assertDictEqual(payload, expected)
         mock_push_notifications.assert_called()
 
-    def test_get_apns_payload_stream_message(self):
+    def test_get_message_payload_apns_stream_message(self):
         # type: () -> None
         user_profile = self.example_user("hamlet")
         stream = Stream.objects.filter(name='Verona').get()
         message = self.get_message(Recipient.STREAM, stream.id)
         message.trigger = 'push_stream_notify'
         message.stream_name = 'Verona'
-        payload = get_apns_payload(user_profile, message)
+        payload = get_message_payload_apns(user_profile, message)
         expected = {
             'alert': {
                 'title': '#Verona > Test Topic',
@@ -1042,14 +1052,14 @@ class TestGetAPNsPayload(PushNotificationTest):
         }
         self.assertDictEqual(payload, expected)
 
-    def test_get_apns_payload_stream_mention(self):
+    def test_get_message_payload_apns_stream_mention(self):
         # type: () -> None
         user_profile = self.example_user("othello")
         stream = Stream.objects.filter(name='Verona').get()
         message = self.get_message(Recipient.STREAM, stream.id)
         message.trigger = 'mentioned'
         message.stream_name = 'Verona'
-        payload = get_apns_payload(user_profile, message)
+        payload = get_message_payload_apns(user_profile, message)
         expected = {
             'alert': {
                 'title': '#Verona > Test Topic',
@@ -1075,14 +1085,14 @@ class TestGetAPNsPayload(PushNotificationTest):
         self.assertDictEqual(payload, expected)
 
     @override_settings(PUSH_NOTIFICATION_REDACT_CONTENT = True)
-    def test_get_apns_payload_redacted_content(self) -> None:
+    def test_get_message_payload_apns_redacted_content(self) -> None:
         user_profile = self.example_user("othello")
         message_id = self.send_huddle_message(
             self.sender.email,
             [self.example_email('othello'), self.example_email('cordelia')])
         message = Message.objects.get(id=message_id)
         message.trigger = 'private_message'
-        payload = get_apns_payload(user_profile, message)
+        payload = get_message_payload_apns(user_profile, message)
         expected = {
             'alert': {
                 'title': 'Cordelia Lear, King Hamlet, Othello, the Moor of Venice',
@@ -1110,7 +1120,7 @@ class TestGetAPNsPayload(PushNotificationTest):
         self.assertDictEqual(payload, expected)
 
 class TestGetGCMPayload(PushNotificationTest):
-    def test_get_gcm_payload(self) -> None:
+    def test_get_message_payload_gcm(self) -> None:
         stream = Stream.objects.filter(name='Verona').get()
         message = self.get_message(Recipient.STREAM, stream.id)
         message.content = 'a' * 210
@@ -1119,8 +1129,8 @@ class TestGetGCMPayload(PushNotificationTest):
         message.trigger = 'mentioned'
 
         user_profile = self.example_user('hamlet')
-        payload = get_gcm_payload(user_profile, message)
-        expected = {
+        payload, gcm_options = get_message_payload_gcm(user_profile, message)
+        self.assertDictEqual(payload, {
             "user": user_profile.email,
             "event": "message",
             "alert": "New mention from King Hamlet",
@@ -1138,15 +1148,17 @@ class TestGetGCMPayload(PushNotificationTest):
             "recipient_type": "stream",
             "stream": get_display_recipient(message.recipient),
             "topic": message.topic_name(),
-        }
-        self.assertDictEqual(payload, expected)
+        })
+        self.assertDictEqual(gcm_options, {
+            "priority": "high",
+        })
 
-    def test_get_gcm_payload_personal(self) -> None:
+    def test_get_message_payload_gcm_personal(self) -> None:
         message = self.get_message(Recipient.PERSONAL, 1)
         message.trigger = 'private_message'
         user_profile = self.example_user('hamlet')
-        payload = get_gcm_payload(user_profile, message)
-        expected = {
+        payload, gcm_options = get_message_payload_gcm(user_profile, message)
+        self.assertDictEqual(payload, {
             "user": user_profile.email,
             "event": "message",
             "alert": "New private message from King Hamlet",
@@ -1162,16 +1174,18 @@ class TestGetGCMPayload(PushNotificationTest):
             "sender_full_name": "King Hamlet",
             "sender_avatar_url": absolute_avatar_url(message.sender),
             "recipient_type": "private",
-        }
-        self.assertDictEqual(payload, expected)
+        })
+        self.assertDictEqual(gcm_options, {
+            "priority": "high",
+        })
 
-    def test_get_gcm_payload_stream_notifications(self) -> None:
+    def test_get_message_payload_gcm_stream_notifications(self) -> None:
         message = self.get_message(Recipient.STREAM, 1)
         message.trigger = 'stream_push_notify'
         message.stream_name = 'Denmark'
         user_profile = self.example_user('hamlet')
-        payload = get_gcm_payload(user_profile, message)
-        expected = {
+        payload, gcm_options = get_message_payload_gcm(user_profile, message)
+        self.assertDictEqual(payload, {
             "user": user_profile.email,
             "event": "message",
             "alert": "New stream message from King Hamlet in Denmark",
@@ -1189,17 +1203,19 @@ class TestGetGCMPayload(PushNotificationTest):
             "recipient_type": "stream",
             "topic": "Test Topic",
             "stream": "Denmark"
-        }
-        self.assertDictEqual(payload, expected)
+        })
+        self.assertDictEqual(gcm_options, {
+            "priority": "high",
+        })
 
     @override_settings(PUSH_NOTIFICATION_REDACT_CONTENT = True)
-    def test_get_gcm_payload_redacted_content(self) -> None:
+    def test_get_message_payload_gcm_redacted_content(self) -> None:
         message = self.get_message(Recipient.STREAM, 1)
         message.trigger = 'stream_push_notify'
         message.stream_name = 'Denmark'
         user_profile = self.example_user('hamlet')
-        payload = get_gcm_payload(user_profile, message)
-        expected = {
+        payload, gcm_options = get_message_payload_gcm(user_profile, message)
+        self.assertDictEqual(payload, {
             "user": user_profile.email,
             "event": "message",
             "alert": "New stream message from King Hamlet in Denmark",
@@ -1217,8 +1233,10 @@ class TestGetGCMPayload(PushNotificationTest):
             "recipient_type": "stream",
             "topic": "Test Topic",
             "stream": "Denmark"
-        }
-        self.assertDictEqual(payload, expected)
+        })
+        self.assertDictEqual(gcm_options, {
+            "priority": "high",
+        })
 
 
 class TestSendNotificationsToBouncer(ZulipTestCase):
@@ -1509,6 +1527,39 @@ class GCMSendTest(PushNotificationTest):
         send_android_push_notification_to_user(self.user_profile, data, {})
         c1 = call("GCM: Delivery to %s failed: Failed" % (token,))
         mock_warn.assert_has_calls([c1], any_order=True)
+
+class TestClearOnRead(ZulipTestCase):
+    def test_mark_stream_as_read(self) -> None:
+        n_msgs = 3
+        max_unbatched = 2
+
+        hamlet = self.example_user("hamlet")
+        hamlet.enable_stream_push_notifications = True
+        hamlet.save()
+        stream = self.subscribe(hamlet, "Denmark")
+
+        msgids = [self.send_stream_message(self.example_email("iago"),
+                                           stream.name,
+                                           "yo {}".format(i))
+                  for i in range(n_msgs)]
+        UserMessage.objects.filter(
+            user_profile_id=hamlet.id,
+            message_id__in=msgids,
+        ).update(
+            flags=F('flags').bitor(
+                UserMessage.flags.active_mobile_push_notification))
+
+        with mock.patch("zerver.lib.actions.queue_json_publish") as mock_publish:
+            with override_settings(MAX_UNBATCHED_REMOVE_NOTIFICATIONS=max_unbatched):
+                do_mark_stream_messages_as_read(hamlet, self.client, stream)
+            queue_items = [c[0][1] for c in mock_publish.call_args_list]
+            groups = [item['message_ids'] for item in queue_items]
+
+        self.assertEqual(len(groups), min(len(msgids), max_unbatched))
+        for g in groups[:-1]:
+            self.assertEqual(len(g), 1)
+        self.assertEqual(sum(len(g) for g in groups), len(msgids))
+        self.assertEqual(set(id for g in groups for id in g), set(msgids))
 
 class TestReceivesNotificationsFunctions(ZulipTestCase):
     def setUp(self) -> None:

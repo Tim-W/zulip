@@ -148,10 +148,10 @@ def get_dev_uuid_var_path(create_if_missing=False):
     else:
         if create_if_missing:
             zulip_uuid = str(uuid.uuid4())
-            # We need sudo here, since the path will be under /srv/ in the
+            # We need root access here, since the path will be under /srv/ in the
             # development environment.
-            subprocess.check_call(["sudo", "/bin/bash", "-c",
-                                   "echo %s > %s" % (zulip_uuid, uuid_path)])
+            run_as_root(["/bin/bash", "-c",
+                         "echo %s > %s" % (zulip_uuid, uuid_path)])
         else:
             raise AssertionError("Missing UUID file; please run tools/provision!")
 
@@ -332,7 +332,7 @@ def may_be_perform_purging(dirs_to_purge, dirs_to_keep, dir_type, dry_run, verbo
         if verbose:
             print("Cleaning unused %s: %s" % (dir_type, directory))
         if not dry_run:
-            subprocess.check_call(["sudo", "rm", "-rf", directory])
+            run_as_root(["rm", "-rf", directory])
 
     for directory in dirs_to_keep:
         if verbose:
@@ -418,6 +418,13 @@ def is_root() -> bool:
     if 'posix' in os.name and os.geteuid() == 0:
         return True
     return False
+
+def run_as_root(args, **kwargs):
+    # type: (List[str], **Any) -> None
+    sudo_args = kwargs.pop('sudo_args', [])
+    if not is_root():
+        args = ['sudo'] + sudo_args + ['--'] + args
+    run(args, **kwargs)
 
 def assert_not_running_as_root() -> None:
     script_name = os.path.abspath(sys.argv[0])

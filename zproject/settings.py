@@ -226,6 +226,7 @@ DEFAULT_SETTINGS = {
     'PASSWORD_MIN_GUESSES': 10000,
     'PUSH_NOTIFICATION_BOUNCER_URL': None,
     'PUSH_NOTIFICATION_REDACT_CONTENT': False,
+    'SUBMIT_USAGE_STATISTICS': True,
     'RATE_LIMITING': True,
     'SEND_LOGIN_EMAILS': True,
     'EMBEDDED_BOTS_ENABLED': False,
@@ -338,6 +339,13 @@ DEFAULT_SETTINGS.update({
     # Settings for APNS.  Only needed on push.zulipchat.com.
     'APNS_CERT_FILE': None,
     'APNS_SANDBOX': True,
+
+    # Max number of "remove notification" FCM/GCM messages to send separately
+    # in one burst; the rest are batched.  Older clients ignore the batched
+    # portion, so only receive this many removals.  Lower values mitigate
+    # server congestion and client battery use.  To batch unconditionally,
+    # set to 1.
+    'MAX_UNBATCHED_REMOVE_NOTIFICATIONS': 10,
 
     # Limits related to the size of file uploads; last few in MB.
     'DATA_UPLOAD_MAX_MEMORY_SIZE': 25 * 1024 * 1024,
