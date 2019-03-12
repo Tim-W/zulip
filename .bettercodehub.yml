@@ -3,4 +3,4 @@ languages:
     - python
     - javascript
 include:
-    static/js/*
+    /static/js/.*
