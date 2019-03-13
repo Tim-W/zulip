@@ -1,6 +1,7 @@
-component_depth: 1
+component_depth: 3
 languages:
-    - python
     - javascript
+exclude:
+    *
 include:
     /static/js/.*
